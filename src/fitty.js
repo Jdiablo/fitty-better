@@ -1,10 +1,6 @@
-export default ((w) => {
-
-  // no window, early exit
-  if (!w) return;
-
+w = window;
   // node list to array helper method
-  const toArray = nl => [].slice.call(nl);
+  const toArray = (nl) => [].slice.call(nl);
 
   // states
   const DrawState = {
@@ -21,13 +17,17 @@ export default ((w) => {
   let redrawFrame = null;
   const requestRedraw = 'requestAnimationFrame' in w ? () => {
       w.cancelAnimationFrame(redrawFrame);
-      redrawFrame = w.requestAnimationFrame(() => redraw(fitties.filter(f => f.dirty && f.active)));
+      redrawFrame = w.requestAnimationFrame(() => {
+        redraw(fitties.filter(f => f.dirty));
+      });
     } : () => {};
 
 
   // sets all fitties to dirty so they are redrawn on the next redraw loop, then calls redraw
   const redrawAll = (type) => () => {
-    fitties.forEach(f => f.dirty = type);
+    fitties.forEach(f => {
+      f.dirty = type;
+    });
     requestRedraw();
   };
 
@@ -48,8 +48,13 @@ export default ((w) => {
       .forEach(applyStyle);
 
     // we now determine which fitties should be redrawn
-    const fittiesToRedraw = fitties.filter(shouldRedraw);
+    let fittiesToRedraw = fitties.filter(shouldRedraw);
 
+      fittiesToRedraw = fittiesToRedraw.filter((x, index, self) =>
+          index === self.findIndex((y) => (
+              y.element === x.element
+          ))
+      );
     // we calculate final styles for these fitties
     fittiesToRedraw.forEach(calculateStyles);
 
@@ -65,28 +70,63 @@ export default ((w) => {
 
   const markAsClean = f => f.dirty = DrawState.IDLE;
 
-  const calculateStyles = f => {
-
-    // get available width from parent node
-    f.availableWidth = f.element.parentNode.clientWidth;
-
+const calculateStyles = f => {
     // the space our target element uses
     f.currentWidth = f.element.scrollWidth;
+    if (f.currentWidth == 0)
+        return;
 
     // remember current font size
     f.previousFontSize = f.currentFontSize;
 
+    if (f.multiLine == true) {
+        let lineHeight = window.getComputedStyle(f.element, null).getPropertyValue('line-height')?.replace("px", "") || '0';
+        lineHeight = parseFloat(lineHeight);
+        let linesCount = f.element.clientHeight / (lineHeight + 5);
+        f.currentWidth /= linesCount;
+        //f.sizeMultiplier = 1.1;
+        //f.availableWidth = f.element.parentNode.clientWidth * f.sizeMultiplier;
+        //let scale = (f.availableWidth / f.currentWidth);
+        //let fontSize = scale * f.previousFontSize;
+        //if (scale > 1) {
+        //    // get available width from parent node
+        //    while (fontSize < f.maxSize) {
+        //        f.availableWidth = f.element.parentNode.clientWidth * f.sizeMultiplier;
+        //        scale = (f.availableWidth / f.currentWidth);
+        //        fontSize = scale * f.previousFontSize;
+        //        f.sizeMultiplier += 0.1;
+        //    }
+        //} else {
+        //    while (scale < 1 && fontSize < f.maxSize) {
+        //        f.availableWidth = f.element.parentNode.clientWidth * f.sizeMultiplier;
+        //        scale = (f.availableWidth / f.currentWidth);
+        //        fontSize = scale * f.previousFontSize;
+        //        f.sizeMultiplier += 0.1;
+        //    }
+        //    fontSize = Math.max(fontSize, f.minSize);
+        //}
+        //f.currentFontSize = Math.min(fontSize, f.maxSize);
+    }
+    //else {
+    // get available width from parent node
+    f.availableWidth = f.element.parentNode.clientWidth;
+    let padding = parseFloat(window.getComputedStyle(f.element, null).getPropertyValue('padding-right')?.replace("px", "") || '0')
+    f.availableWidth -= padding;
+    padding = parseFloat(window.getComputedStyle(f.element.parentNode, null).getPropertyValue('padding-right')?.replace("px", "") || '0')
+    f.availableWidth -= padding;
+    padding = parseFloat(window.getComputedStyle(f.element.parentNode, null).getPropertyValue('padding-left')?.replace("px", "") || '0')
+    f.availableWidth -= padding;
     // let's calculate the new font size
     f.currentFontSize = Math.min(
-      Math.max(
-        f.minSize,
-        (f.availableWidth / f.currentWidth) * f.previousFontSize
-      ),
-      f.maxSize
+        Math.max(
+            f.minSize,
+            (f.availableWidth / f.currentWidth) * f.previousFontSize
+        ),
+        f.maxSize
     );
-
+    //}
     // if allows wrapping, only wrap when at minimum font size (otherwise would break container)
-    f.whiteSpace = f.multiLine && f.currentFontSize === f.minSize
+    f.whiteSpace = f.multiLine
       ? 'normal'
       : 'nowrap';
 
@@ -116,7 +156,9 @@ export default ((w) => {
     let preStyle = false;
 
     // if we already tested for prestyling we don't have to do it again
-    if (f.preStyleTestCompleted) return false;
+    if (f.preStyleTestCompleted) {
+      return false;
+    }
 
     // should have an inline style, if not, apply
     if (!/inline-/.test(f.display)) {
@@ -137,12 +179,17 @@ export default ((w) => {
   };
 
 
-  // apply styles to single fitty
-  const applyStyle = f => {
-    f.element.style.whiteSpace = f.whiteSpace;
-    f.element.style.display = f.display;
-    f.element.style.fontSize = f.currentFontSize + 'px';
-  };
+    // apply styles to single fitty
+    const applyStyle = f => {
+
+        // remember original style, we need this to restore the fitty style when unsubscribing
+        if (!f.originalStyle) {
+            f.originalStyle = f.element.getAttribute('style') || '';
+        }
+
+        // set the new style to the original style plus the fitty styles
+        f.element.style.cssText = `${f.originalStyle};white-space:${f.whiteSpace};display:${f.display};font-size:${f.currentFontSize}px`;
+    };
 
 
   // dispatch a fit event on a fitty
@@ -160,21 +207,12 @@ export default ((w) => {
   // fit method, marks the fitty as dirty and requests a redraw (this will also redraw any other fitty marked as dirty)
   const fit = (f, type) => () => {
     f.dirty = type;
-    if (!f.active) return;
     requestRedraw();
   };
 
-  const init = f => {
 
-    // save some of the original CSS properties before we change them
-    f.originalStyle = {
-      whiteSpace: f.element.style.whiteSpace,
-      display: f.element.style.display,
-      fontSize: f.element.style.fontSize,
-    };
-
-    // should we observe DOM mutations
-    observeMutations(f);
+  // add a new fitty, does not redraw said fitty
+  const subscribe = f => {
 
     // this is a new fitty so we need to validate if it's styles are in order
     f.newbie = true;
@@ -184,36 +222,30 @@ export default ((w) => {
 
     // we want to be able to update this fitty
     fitties.push(f);
-  }
+  };
 
-  const destroy = f => () => {
+
+  // remove an existing fitty
+  const unsubscribe = f => () => {
 
     // remove from fitties array
     fitties = fitties.filter(_ => _.element !== f.element);
 
     // stop observing DOM
-    if (f.observeMutations) f.observer.disconnect();
+    if (f.observeMutations) {
+      f.observer.disconnect();
+    }
 
-    // reset the CSS properties we changes
-    f.element.style.whiteSpace = f.originalStyle.whiteSpace;
-    f.element.style.display = f.originalStyle.display;
-    f.element.style.fontSize = f.originalStyle.fontSize;
+    // reset font size to inherited size
+    f.element.style.cssText = f.originalStyle;
   };
-
-  // add a new fitty, does not redraw said fitty
-  const subscribe = f => () => {
-    if (f.active) return;
-    f.active = true;
-    requestRedraw();
-  };
-
-  // remove an existing fitty
-  const unsubscribe = f => () => f.active = false;
 
   const observeMutations = f => {
 
     // no observing?
-    if (!f.observeMutations) return;
+    if (!f.observeMutations) {
+      return;
+    }
 
     // start observing mutations
     f.observer = new MutationObserver(fit(f, DrawState.DIRTY_CONTENT));
@@ -239,6 +271,7 @@ export default ((w) => {
   const defaultOptions = {
     minSize: 16,
     maxSize: 512,
+    sizeMultiplier: 1,
     multiLine: true,
     observeMutations: 'MutationObserver' in w ? mutationObserverDefaultSetting : false
   };
@@ -267,20 +300,20 @@ export default ((w) => {
         ...fittyOptions,
 
         // internal options for this fitty
-        element,
-        active: true
+        element
       };
 
-      // initialise this fitty
-      init(f);
+      // register this fitty
+      subscribe(f);
+
+      // should we observe DOM mutations
+      observeMutations(f);
 
       // expose API
       return {
         element,
         fit: fit(f, DrawState.DIRTY),
-        unfreeze: subscribe(f),
-        freeze: unsubscribe(f),
-        unsubscribe: destroy(f)
+        unsubscribe: unsubscribe(f)
       };
 
     });
@@ -337,9 +370,3 @@ export default ((w) => {
 
   // public fit all method, will force redraw no matter what
   fitty.fitAll = redrawAll(DrawState.DIRTY);
-
-
-  // export our fitty function, we don't want to keep it to our selves
-  return fitty;
-
-})(typeof window === 'undefined' ? null : window);
